@@ -32,6 +32,7 @@ Flags:
   --ratios          comma-separated aspect ratios e.g. 16x9,16x10
   --download-dir    directory to save wallpapers
   --script          script to run after setting wallpaper
+  --verbose, -v     print progress messages
 
 Flags override values from ~/.config/vista/config.yaml.
 `
@@ -44,6 +45,8 @@ func main() {
 	ratiosFlag      := flag.String("ratios", "", "comma-separated aspect ratios e.g. 16x9,16x10")
 	downloadDirFlag := flag.String("download-dir", "", "directory to save wallpapers")
 	scriptFlag      := flag.String("script", "", "script to run after setting wallpaper")
+	verboseFlag     := flag.Bool("verbose", false, "print progress messages")
+	flag.BoolVar(verboseFlag, "v", false, "print progress messages")
 
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
@@ -57,8 +60,10 @@ func main() {
 	cmd  := args[0]
 	rest := args[1:]
 
+	verbose := *verboseFlag
+
 	cfg, err := config.Load()
-	if err != nil {
+	if err != nil && verbose {
 		fmt.Fprintf(os.Stderr, "Warning: could not load config: %v\n", err)
 	}
 
@@ -89,7 +94,9 @@ func main() {
 	if renderer.IsChafaAvailable() {
 		r = &renderer.ChafaRenderer{}
 	} else {
-		fmt.Fprintln(os.Stderr, "Warning: chafa not found, falling back to placeholder renderer")
+		if verbose {
+			fmt.Fprintln(os.Stderr, "Warning: chafa not found, falling back to placeholder renderer")
+		}
 		r = &renderer.FallbackRenderer{}
 	}
 
@@ -101,11 +108,15 @@ func main() {
 			os.Exit(1)
 		}
 		if len(wallpapers) == 0 {
-			fmt.Println("No downloaded wallpapers found.")
+			if verbose {
+				fmt.Println("No downloaded wallpapers found.")
+			}
 			os.Exit(0)
 		}
-		fmt.Printf("Found %d downloaded wallpapers. Loading...\n", len(wallpapers))
-		grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, nil, api.SearchOptions{}, 1)
+		if verbose {
+			fmt.Printf("Found %d downloaded wallpapers. Loading...\n", len(wallpapers))
+		}
+		grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, nil, api.SearchOptions{}, 1, verbose)
 		defer grid.Cleanup()
 		if _, err := grid.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -151,7 +162,9 @@ func main() {
 		Ratios:        cfg.RatiosParam(),
 	}
 
-	fmt.Printf("%s...\n", label)
+	if verbose {
+		fmt.Printf("%s...\n", label)
+	}
 	wallpapers, meta, err := client.SearchPage(opts, 1)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -159,13 +172,17 @@ func main() {
 	}
 
 	if len(wallpapers) == 0 {
-		fmt.Println("No results found.")
+		if verbose {
+			fmt.Println("No results found.")
+		}
 		os.Exit(0)
 	}
 
-	fmt.Printf("Found %d wallpapers across %d pages. Loading...\n", meta.Total, meta.LastPage)
+	if verbose {
+		fmt.Printf("Found %d wallpapers across %d pages. Loading...\n", meta.Total, meta.LastPage)
+	}
 
-	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, client, opts, meta.LastPage)
+	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, client, opts, meta.LastPage, verbose)
 	defer grid.Cleanup()
 
 	_, err = grid.Run()

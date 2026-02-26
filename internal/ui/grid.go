@@ -50,6 +50,7 @@ type Grid struct {
 	prevCount     int
 
 	showHelp bool
+	verbose  bool
 
 
 	// pagination / async loading
@@ -61,7 +62,7 @@ type Grid struct {
 	loadCh     chan loadResult
 }
 
-func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, script string, client *api.Client, opts api.SearchOptions, lastPage int) *Grid {
+func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, script string, client *api.Client, opts api.SearchOptions, lastPage int, verbose bool) *Grid {
 	tmp, _ := os.MkdirTemp("", "vista-thumbs-*")
 	return &Grid{
 		wallpapers:  wallpapers,
@@ -72,6 +73,7 @@ func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, 
 		tempDir:     tmp,
 		rendered:      make(map[int]string),
 		prevSelected:  -1,
+		verbose:       verbose,
 		client:        client,
 		searchOpts:  opts,
 		nextPage:    2,
@@ -293,16 +295,22 @@ func (g *Grid) Run() (string, error) {
 				fmt.Print("\033[?25h")
 
 				wp := g.wallpapers[g.selected]
-				fmt.Printf("Applying %s...\n", wp.ID)
+				if g.verbose {
+					fmt.Printf("Applying %s...\n", wp.ID)
+				}
 				path, err := wallpaper.Download(wp.Path, g.downloadDir)
 				if err != nil {
 					return "", fmt.Errorf("downloading wallpaper: %w", err)
 				}
-				fmt.Printf("Setting wallpaper: %s\n", path)
+				if g.verbose {
+					fmt.Printf("Setting wallpaper: %s\n", path)
+				}
 				if err := wallpaper.Set(path, g.script); err != nil {
 					return "", fmt.Errorf("setting wallpaper: %w", err)
 				}
-				fmt.Println("Wallpaper set!")
+				if g.verbose {
+					fmt.Println("Wallpaper set!")
+				}
 				return path, nil
 			}
 
