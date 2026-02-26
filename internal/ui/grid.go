@@ -303,6 +303,19 @@ func (g *Grid) draw() {
 		fmt.Printf("\033[%d;%dH%s", startRow+g.cellH, startCol, g.formatLabel(idx, wp.Resolution))
 	}
 
+	// Draw selection box on top of the rendered grid so it's always visible.
+	// Top border overwrites the first character row of the selected image;
+	// the bottom border replaces the label row (handled by formatLabel).
+	sel := g.selected
+	selRow := sel / g.cols
+	if selRow >= g.scrollRow && selRow < g.scrollRow+vr {
+		selCol := sel % g.cols
+		startRow := (selRow-g.scrollRow)*(g.cellH+labelHeight) + 1
+		startCol := selCol*g.cellW + 1
+		topBar := "╔" + strings.Repeat("═", g.cellW-2) + "╗"
+		fmt.Printf("\033[%d;%dH\033[1;96m%s\033[0m", startRow, startCol, topBar)
+	}
+
 	// Park cursor below the grid.
 	fmt.Printf("\033[%d;1H", vr*(g.cellH+labelHeight)+1)
 }
@@ -324,7 +337,9 @@ func (g *Grid) imageStr(idx int, thumbPath string) string {
 
 func (g *Grid) formatLabel(idx int, resolution string) string {
 	if idx == g.selected {
-		return "\033[7m " + centerPad(resolution, g.cellW-2) + " \033[0m"
+		// ╚═  1920x1080  ═╝  — bottom half of the selection box
+		inner := centerPad(resolution, g.cellW-4)
+		return "\033[1;96m╚═" + inner + "═╝\033[0m"
 	}
 	return " " + centerPad(resolution, g.cellW-2) + " "
 }
