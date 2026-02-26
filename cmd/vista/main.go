@@ -26,7 +26,7 @@ func main() {
 	client := &api.Client{
 		APIKey:   cfg.APIKey,
 		Username: cfg.Username,
-		Purity:   cfg.Purity,
+		Purity:   cfg.PurityParam(),
 	}
 
 	fmt.Printf("Searching for %q...\n", query)
