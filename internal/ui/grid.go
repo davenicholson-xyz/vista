@@ -331,32 +331,38 @@ func (g *Grid) prefetchThumbs() {
 func (g *Grid) draw() {
 	vr := g.visibleRows()
 
-	needFull := g.prevSelected < 0 ||
-		g.scrollRow != g.prevScrollRow ||
-		len(g.wallpapers) != g.prevCount ||
-		g.showHelp // overlay must always sit on a freshly-drawn grid
-
 	var b strings.Builder
 
-	if needFull {
-		// Full repaint: accumulate into a buffer and write in one shot to
-		// minimise the visible blank-screen window.
+	if g.showHelp {
+		// Clear the screen and show only the help overlay. Trying to draw the
+		// overlay on top of pixel-protocol image placements (kitty/sixel) is
+		// unreliable — images live in a separate rendering layer and bleed
+		// through regardless of background colour. A blank canvas is simpler
+		// and guaranteed readable in every terminal.
 		b.WriteString("\033[H\033[2J")
-		for idx := range g.wallpapers {
-			g.writeCellTo(&b, idx, vr)
+		g.writeHelpTo(&b)
+	} else {
+		needFull := g.prevSelected < 0 ||
+			g.scrollRow != g.prevScrollRow ||
+			len(g.wallpapers) != g.prevCount
+
+		if needFull {
+			// Full repaint: accumulate into a buffer and write in one shot to
+			// minimise the visible blank-screen window.
+			b.WriteString("\033[H\033[2J")
+			for idx := range g.wallpapers {
+				g.writeCellTo(&b, idx, vr)
+			}
+		} else if g.selected != g.prevSelected {
+			// Only the selection changed — repaint just the two affected cells.
+			// No screen clear, so there is no flash at all.
+			g.writeCellTo(&b, g.prevSelected, vr)
+			g.writeCellTo(&b, g.selected, vr)
 		}
-	} else if g.selected != g.prevSelected {
-		// Only the selection changed — repaint just the two affected cells.
-		// No screen clear, so there is no flash at all.
-		g.writeCellTo(&b, g.prevSelected, vr)
-		g.writeCellTo(&b, g.selected, vr)
 	}
 
 	if b.Len() > 0 {
-		if g.showHelp {
-			g.writeHelpTo(&b)
-		}
-		// Park cursor below the grid, then flush everything in one write.
+		// Park cursor, then flush everything in one write.
 		fmt.Fprintf(&b, "\033[%d;1H", vr*(g.cellH+labelHeight)+1)
 		fmt.Print(b.String())
 	}
