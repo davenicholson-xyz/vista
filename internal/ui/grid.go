@@ -48,6 +48,10 @@ type Grid struct {
 	prevScrollRow int
 	prevCount     int
 
+	// background wallpaper-set
+	setBgCh   chan string // goroutine sends a status message when done
+	statusMsg string
+
 	// pagination / async loading
 	client     *api.Client
 	searchOpts api.SearchOptions
@@ -68,6 +72,7 @@ func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, 
 		tempDir:     tmp,
 		rendered:      make(map[int]string),
 		prevSelected:  -1,
+		setBgCh:       make(chan string, 1),
 		client:        client,
 		searchOpts:  opts,
 		nextPage:    2,
@@ -163,6 +168,20 @@ func (g *Grid) fetchNextPage() {
 	}
 }
 
+func (g *Grid) setWallpaperBg(idx int) {
+	wp := g.wallpapers[idx]
+	path, err := wallpaper.Download(wp.Path, g.downloadDir)
+	if err != nil {
+		g.setBgCh <- "\033[1;31mError downloading: " + err.Error() + "\033[0m"
+		return
+	}
+	if err := wallpaper.Set(path, g.script); err != nil {
+		g.setBgCh <- "\033[1;31mError setting wallpaper: " + err.Error() + "\033[0m"
+		return
+	}
+	g.setBgCh <- "\033[2;32mWallpaper set: " + wp.ID + "\033[0m"
+}
+
 // Run starts the interactive UI. Returns the path of the selected wallpaper
 // if the user pressed Enter, or "" if they quit.
 func (g *Grid) Run() (string, error) {
@@ -234,6 +253,10 @@ func (g *Grid) Run() (string, error) {
 					g.ensureVisible()
 				}
 
+			case actionSetBg:
+				g.statusMsg = "\033[2mSetting wallpaper...\033[0m"
+				go g.setWallpaperBg(g.selected)
+
 			case actionOpen:
 				if url := g.wallpapers[g.selected].URL; url != "" {
 					openURL(url)
@@ -263,6 +286,14 @@ func (g *Grid) Run() (string, error) {
 			g.wallpapers = append(g.wallpapers, result.wallpapers...)
 			g.thumbPaths = append(g.thumbPaths, result.thumbPaths...)
 			g.nextPage = result.nextPage
+
+		case msg := <-g.setBgCh:
+			g.statusMsg = msg
+			// Write just the status line — no full redraw needed.
+			vr := g.visibleRows()
+			fmt.Printf("\033[%d;1H\033[K%s", vr*(g.cellH+labelHeight)+1, g.statusMsg)
+			g.maybeLoadMore()
+			continue
 		}
 
 		g.draw()
@@ -303,8 +334,11 @@ func (g *Grid) draw() {
 	}
 
 	if b.Len() > 0 {
-		// Park cursor below the grid, then flush.
-		fmt.Fprintf(&b, "\033[%d;1H", vr*(g.cellH+labelHeight)+1)
+		// Status line + cursor park, then flush everything in one write.
+		fmt.Fprintf(&b, "\033[%d;1H\033[K", vr*(g.cellH+labelHeight)+1)
+		if g.statusMsg != "" {
+			b.WriteString(g.statusMsg)
+		}
 		fmt.Print(b.String())
 	}
 
@@ -423,6 +457,7 @@ const (
 	actionLeft
 	actionRight
 	actionSelect
+	actionSetBg
 	actionOpen
 	actionQuit
 )
@@ -447,6 +482,8 @@ func parseKey(b []byte) keyAction {
 			return actionUp
 		case 'l':
 			return actionRight
+		case 's':
+			return actionSetBg
 		case 'o':
 			return actionOpen
 		}
