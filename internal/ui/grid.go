@@ -43,6 +43,11 @@ type Grid struct {
 	rendered   map[int]string
 	thumbPaths []string
 
+	// draw state — track what was last rendered to enable selective updates
+	prevSelected  int
+	prevScrollRow int
+	prevCount     int
+
 	// pagination / async loading
 	client     *api.Client
 	searchOpts api.SearchOptions
@@ -61,8 +66,9 @@ func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, 
 		downloadDir: downloadDir,
 		script:      script,
 		tempDir:     tmp,
-		rendered:    make(map[int]string),
-		client:      client,
+		rendered:      make(map[int]string),
+		prevSelected:  -1,
+		client:        client,
 		searchOpts:  opts,
 		nextPage:    2,
 		lastPage:    lastPage,
@@ -275,56 +281,77 @@ func (g *Grid) prefetchThumbs() {
 
 func (g *Grid) draw() {
 	vr := g.visibleRows()
-	clearScreen()
 
-	for idx := range g.wallpapers {
-		row := idx / g.cols
-		if row < g.scrollRow || row >= g.scrollRow+vr {
-			continue
+	needFull := g.prevSelected < 0 ||
+		g.scrollRow != g.prevScrollRow ||
+		len(g.wallpapers) != g.prevCount
+
+	var b strings.Builder
+
+	if needFull {
+		// Full repaint: accumulate into a buffer and write in one shot to
+		// minimise the visible blank-screen window.
+		b.WriteString("\033[H\033[2J")
+		for idx := range g.wallpapers {
+			g.writeCellTo(&b, idx, vr)
 		}
-		col := idx % g.cols
-
-		// terminal coordinates are 1-based
-		startRow := (row-g.scrollRow)*(g.cellH+labelHeight) + 1
-		startCol := col*g.cellW + 1
-
-		thumbPath := ""
-		if idx < len(g.thumbPaths) {
-			thumbPath = g.thumbPaths[idx]
-		}
-
-		// Write the image line by line with explicit cursor positioning.
-		// For pixel protocols (kitty/sixel/iterm) the rendered string has no
-		// raw newlines, so this reduces to a single write at the cell origin —
-		// identical to the old block approach. For symbols/character-art output
-		// each line must be explicitly positioned, otherwise newlines reset the
-		// cursor to column 1 and break the grid layout.
-		imgLines := strings.Split(strings.TrimRight(g.imageStr(idx, thumbPath), "\n"), "\n")
-		for i, line := range imgLines {
-			fmt.Printf("\033[%d;%dH%s", startRow+i, startCol, line)
-		}
-
-		// Label — always at a fixed offset below the cell origin, regardless
-		// of where the image output left the cursor.
-		wp := g.wallpapers[idx]
-		fmt.Printf("\033[%d;%dH%s", startRow+g.cellH, startCol, g.formatLabel(idx, wp.Resolution))
+	} else if g.selected != g.prevSelected {
+		// Only the selection changed — repaint just the two affected cells.
+		// No screen clear, so there is no flash at all.
+		g.writeCellTo(&b, g.prevSelected, vr)
+		g.writeCellTo(&b, g.selected, vr)
 	}
 
-	// Draw selection box on top of the rendered grid so it's always visible.
-	// Top border overwrites the first character row of the selected image;
-	// the bottom border replaces the label row (handled by formatLabel).
-	sel := g.selected
-	selRow := sel / g.cols
-	if selRow >= g.scrollRow && selRow < g.scrollRow+vr {
-		selCol := sel % g.cols
-		startRow := (selRow-g.scrollRow)*(g.cellH+labelHeight) + 1
-		startCol := selCol*g.cellW + 1
+	if b.Len() > 0 {
+		// Park cursor below the grid, then flush.
+		fmt.Fprintf(&b, "\033[%d;1H", vr*(g.cellH+labelHeight)+1)
+		fmt.Print(b.String())
+	}
+
+	g.prevSelected = g.selected
+	g.prevScrollRow = g.scrollRow
+	g.prevCount = len(g.wallpapers)
+}
+
+// writeCellTo renders a single cell (image + selection border + label) into b.
+// It is a no-op if the cell is outside the current viewport.
+func (g *Grid) writeCellTo(b *strings.Builder, idx int, vr int) {
+	if idx < 0 || idx >= len(g.wallpapers) {
+		return
+	}
+	row := idx / g.cols
+	if row < g.scrollRow || row >= g.scrollRow+vr {
+		return
+	}
+	col := idx % g.cols
+
+	// terminal coordinates are 1-based
+	startRow := (row-g.scrollRow)*(g.cellH+labelHeight) + 1
+	startCol := col*g.cellW + 1
+
+	thumbPath := ""
+	if idx < len(g.thumbPaths) {
+		thumbPath = g.thumbPaths[idx]
+	}
+
+	// Write the image line by line with explicit cursor positioning.
+	// For pixel protocols (kitty/sixel/iterm) the rendered string has no
+	// raw newlines, so this reduces to a single write at the cell origin.
+	// For symbols/character-art each line must be explicitly positioned.
+	imgLines := strings.Split(strings.TrimRight(g.imageStr(idx, thumbPath), "\n"), "\n")
+	for i, line := range imgLines {
+		fmt.Fprintf(b, "\033[%d;%dH%s", startRow+i, startCol, line)
+	}
+
+	// Selection top border — drawn after the image so it always sits on top.
+	if idx == g.selected {
 		topBar := "╔" + strings.Repeat("═", g.cellW-2) + "╗"
-		fmt.Printf("\033[%d;%dH\033[1;96m%s\033[0m", startRow, startCol, topBar)
+		fmt.Fprintf(b, "\033[%d;%dH\033[1;96m%s\033[0m", startRow, startCol, topBar)
 	}
 
-	// Park cursor below the grid.
-	fmt.Printf("\033[%d;1H", vr*(g.cellH+labelHeight)+1)
+	// Label — always at a fixed offset below the cell origin.
+	wp := g.wallpapers[idx]
+	fmt.Fprintf(b, "\033[%d;%dH%s", startRow+g.cellH, startCol, g.formatLabel(idx, wp.Resolution))
 }
 
 func (g *Grid) imageStr(idx int, thumbPath string) string {
