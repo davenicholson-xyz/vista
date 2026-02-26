@@ -123,7 +123,7 @@ func main() {
 			fmt.Fprint(os.Stderr, usage)
 			os.Exit(1)
 		}
-		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "relevance"}
+		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "random"}
 		label = fmt.Sprintf("Searching for %q", opts.Query)
 	case "top", "t":
 		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "toplist"}
