@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -47,6 +48,8 @@ type Grid struct {
 	prevSelected  int
 	prevScrollRow int
 	prevCount     int
+
+	showHelp bool
 
 
 	// pagination / async loading
@@ -247,6 +250,38 @@ func (g *Grid) Run() (string, error) {
 			case actionSetBg:
 				go g.setWallpaperBg(g.selected)
 
+			case actionDelete:
+				wp := g.wallpapers[g.selected]
+				if !filepath.IsAbs(wp.Path) {
+					break // only delete local files
+				}
+				os.Remove(wp.Path)
+				// Re-key the render cache so indices remain valid.
+				newRendered := make(map[int]string)
+				for k, v := range g.rendered {
+					if k < g.selected {
+						newRendered[k] = v
+					} else if k > g.selected {
+						newRendered[k-1] = v
+					}
+				}
+				g.rendered = newRendered
+				g.wallpapers = append(g.wallpapers[:g.selected], g.wallpapers[g.selected+1:]...)
+				g.thumbPaths = append(g.thumbPaths[:g.selected], g.thumbPaths[g.selected+1:]...)
+				if len(g.wallpapers) == 0 {
+					clearScreen()
+					return "", nil
+				}
+				if g.selected >= len(g.wallpapers) {
+					g.selected = len(g.wallpapers) - 1
+				}
+				g.ensureVisible()
+				g.prevSelected = -1
+
+			case actionHelp:
+				g.showHelp = !g.showHelp
+				g.prevSelected = -1 // force full redraw
+
 			case actionOpen:
 				if url := g.wallpapers[g.selected].URL; url != "" {
 					openURL(url)
@@ -298,7 +333,8 @@ func (g *Grid) draw() {
 
 	needFull := g.prevSelected < 0 ||
 		g.scrollRow != g.prevScrollRow ||
-		len(g.wallpapers) != g.prevCount
+		len(g.wallpapers) != g.prevCount ||
+		g.showHelp // overlay must always sit on a freshly-drawn grid
 
 	var b strings.Builder
 
@@ -317,6 +353,9 @@ func (g *Grid) draw() {
 	}
 
 	if b.Len() > 0 {
+		if g.showHelp {
+			g.writeHelpTo(&b)
+		}
 		// Park cursor below the grid, then flush everything in one write.
 		fmt.Fprintf(&b, "\033[%d;1H", vr*(g.cellH+labelHeight)+1)
 		fmt.Print(b.String())
@@ -410,6 +449,53 @@ func centerPad(s string, width int) string {
 	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
 }
 
+func (g *Grid) writeHelpTo(b *strings.Builder) {
+	w, h := g.termSize()
+
+	title := " KEYS "
+	rows := []string{
+		"arrows / hjkl   navigate",
+		"enter           download + set",
+		"s               set (stay open)",
+		"o               open in browser",
+		"d               delete (history)",
+		"?               toggle help",
+		"q               quit",
+	}
+
+	maxW := len(title)
+	for _, r := range rows {
+		if len(r) > maxW {
+			maxW = len(r)
+		}
+	}
+
+	// inner = content width (1 space padding each side); boxW = inner + 2 borders
+	inner := maxW + 2
+	boxH := len(rows) + 2 // top + bottom border
+
+	startRow := (h-boxH)/2 + 1
+	startCol := (w-inner-2)/2 + 1
+
+	// Top border with centred title
+	titlePad := inner - len(title)
+	lPad := titlePad / 2
+	rPad := titlePad - lPad
+	fmt.Fprintf(b, "\033[%d;%dH\033[1;96m╔%s%s%s╗\033[0m",
+		startRow, startCol,
+		strings.Repeat("═", lPad), title, strings.Repeat("═", rPad))
+
+	// Content rows
+	for i, row := range rows {
+		fmt.Fprintf(b, "\033[%d;%dH\033[1;96m║\033[0m %-*s \033[1;96m║\033[0m",
+			startRow+1+i, startCol, maxW, row)
+	}
+
+	// Bottom border
+	fmt.Fprintf(b, "\033[%d;%dH\033[1;96m╚%s╝\033[0m",
+		startRow+1+len(rows), startCol, strings.Repeat("═", inner))
+}
+
 func openURL(url string) {
 	var cmd string
 	switch runtime.GOOS {
@@ -438,7 +524,9 @@ const (
 	actionRight
 	actionSelect
 	actionSetBg
+	actionDelete
 	actionOpen
+	actionHelp
 	actionQuit
 )
 
@@ -464,8 +552,12 @@ func parseKey(b []byte) keyAction {
 			return actionRight
 		case 's':
 			return actionSetBg
+		case 'd':
+			return actionDelete
 		case 'o':
 			return actionOpen
+		case '?':
+			return actionHelp
 		}
 	}
 
