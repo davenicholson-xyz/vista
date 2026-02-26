@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/davenicholson-xyz/vista/internal/api"
@@ -226,6 +228,9 @@ func (g *Grid) Run() (string, error) {
 					g.ensureVisible()
 				}
 
+			case actionOpen:
+				openURL(g.wallpapers[g.selected].URL)
+
 			case actionSelect:
 				clearScreen()
 				term.Restore(int(os.Stdin.Fd()), oldState)
@@ -362,6 +367,19 @@ func centerPad(s string, width int) string {
 	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
 }
 
+func openURL(url string) {
+	var cmd string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = "open"
+	case "windows":
+		cmd = "cmd /c start"
+	default:
+		cmd = "xdg-open"
+	}
+	exec.Command(cmd, url).Start() //nolint:errcheck
+}
+
 func clearScreen() {
 	fmt.Print("\033[H\033[2J")
 }
@@ -376,6 +394,7 @@ const (
 	actionLeft
 	actionRight
 	actionSelect
+	actionOpen
 	actionQuit
 )
 
@@ -399,6 +418,8 @@ func parseKey(b []byte) keyAction {
 			return actionUp
 		case 'l':
 			return actionRight
+		case 'o':
+			return actionOpen
 		}
 	}
 
