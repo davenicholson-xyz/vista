@@ -452,6 +452,14 @@ func centerPad(s string, width int) string {
 func (g *Grid) writeHelpTo(b *strings.Builder) {
 	w, h := g.termSize()
 
+	// Colour scheme: dark background so the box is opaque over images.
+	const (
+		bg     = "\033[48;5;235m" // dark grey background
+		border = "\033[48;5;235m\033[1;96m" // bright cyan border on dark bg
+		text   = "\033[48;5;235m\033[97m"   // bright white text on dark bg
+		reset  = "\033[0m"
+	)
+
 	title := " KEYS "
 	rows := []string{
 		"arrows / hjkl   navigate",
@@ -470,9 +478,9 @@ func (g *Grid) writeHelpTo(b *strings.Builder) {
 		}
 	}
 
-	// inner = content width (1 space padding each side); boxW = inner + 2 borders
+	// inner = content width (1 space padding each side); box outer = inner + 2 borders
 	inner := maxW + 2
-	boxH := len(rows) + 2 // top + bottom border
+	boxH := len(rows) + 2
 
 	startRow := (h-boxH)/2 + 1
 	startCol := (w-inner-2)/2 + 1
@@ -481,19 +489,20 @@ func (g *Grid) writeHelpTo(b *strings.Builder) {
 	titlePad := inner - len(title)
 	lPad := titlePad / 2
 	rPad := titlePad - lPad
-	fmt.Fprintf(b, "\033[%d;%dH\033[1;96m╔%s%s%s╗\033[0m",
-		startRow, startCol,
-		strings.Repeat("═", lPad), title, strings.Repeat("═", rPad))
+	fmt.Fprintf(b, "\033[%d;%dH%s╔%s%s%s╗%s",
+		startRow, startCol, border,
+		strings.Repeat("═", lPad), title, strings.Repeat("═", rPad), reset)
 
-	// Content rows
+	// Content rows — bg covers full width so images don't bleed through
 	for i, row := range rows {
-		fmt.Fprintf(b, "\033[%d;%dH\033[1;96m║\033[0m %-*s \033[1;96m║\033[0m",
-			startRow+1+i, startCol, maxW, row)
+		fmt.Fprintf(b, "\033[%d;%dH%s║%s %-*s %s║%s",
+			startRow+1+i, startCol,
+			border, text, maxW, row, border, reset)
 	}
 
 	// Bottom border
-	fmt.Fprintf(b, "\033[%d;%dH\033[1;96m╚%s╝\033[0m",
-		startRow+1+len(rows), startCol, strings.Repeat("═", inner))
+	fmt.Fprintf(b, "\033[%d;%dH%s╚%s╝%s",
+		startRow+1+len(rows), startCol, border, strings.Repeat("═", inner), reset)
 }
 
 func openURL(url string) {
