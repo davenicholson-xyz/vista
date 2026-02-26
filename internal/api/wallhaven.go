@@ -42,10 +42,11 @@ type SearchOptions struct {
 }
 
 type Client struct {
-	APIKey     string
-	Username   string
-	Purity     string
-	Categories string
+	APIKey        string
+	Username      string
+	Purity        string
+	Categories    string
+	MinResolution string
 }
 
 func (c *Client) SearchPage(opts SearchOptions, page int) ([]Wallpaper, Meta, error) {
@@ -62,6 +63,9 @@ func (c *Client) SearchPage(opts SearchOptions, page int) ([]Wallpaper, Meta, er
 	}
 	if c.Categories != "" {
 		params.Set("categories", c.Categories)
+	}
+	if c.MinResolution != "" {
+		params.Set("atleast", c.MinResolution)
 	}
 	if c.APIKey != "" {
 		params.Set("apikey", c.APIKey)

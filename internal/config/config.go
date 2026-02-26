@@ -8,12 +8,13 @@ import (
 )
 
 type Config struct {
-	APIKey      string   `yaml:"apikey"`
-	Username    string   `yaml:"username"`
-	Purity      []string `yaml:"purity"`
-	Categories  []string `yaml:"categories"`
-	DownloadDir string   `yaml:"download_dir"`
-	Script      string   `yaml:"script"`
+	APIKey        string   `yaml:"apikey"`
+	Username      string   `yaml:"username"`
+	Purity        []string `yaml:"purity"`
+	Categories    []string `yaml:"categories"`
+	MinResolution string   `yaml:"min_resolution"`
+	DownloadDir   string   `yaml:"download_dir"`
+	Script        string   `yaml:"script"`
 }
 
 func Load() (*Config, error) {

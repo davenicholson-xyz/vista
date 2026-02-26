@@ -64,10 +64,11 @@ func main() {
 	}
 
 	client := &api.Client{
-		APIKey:     cfg.APIKey,
-		Username:   cfg.Username,
-		Purity:     cfg.PurityParam(),
-		Categories: cfg.CategoriesParam(),
+		APIKey:        cfg.APIKey,
+		Username:      cfg.Username,
+		Purity:        cfg.PurityParam(),
+		Categories:    cfg.CategoriesParam(),
+		MinResolution: cfg.MinResolution,
 	}
 
 	fmt.Printf("%s...\n", label)
