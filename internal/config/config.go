@@ -11,6 +11,7 @@ type Config struct {
 	APIKey      string   `yaml:"apikey"`
 	Username    string   `yaml:"username"`
 	Purity      []string `yaml:"purity"`
+	Categories  []string `yaml:"categories"`
 	DownloadDir string   `yaml:"download_dir"`
 	Script      string   `yaml:"script"`
 }
@@ -18,6 +19,7 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Purity:      []string{"sfw"},
+		Categories:  []string{"general", "anime", "people"},
 		DownloadDir: "~/Pictures/wallpapers",
 	}
 
@@ -42,6 +44,9 @@ func Load() (*Config, error) {
 	if len(cfg.Purity) == 0 {
 		cfg.Purity = []string{"sfw"}
 	}
+	if len(cfg.Categories) == 0 {
+		cfg.Categories = []string{"general", "anime", "people"}
+	}
 	if cfg.DownloadDir == "" {
 		cfg.DownloadDir = "~/Pictures/wallpapers"
 	}
@@ -60,6 +65,23 @@ func (c *Config) PurityParam() string {
 		case "sketchy":
 			bits[1] = '1'
 		case "nsfw":
+			bits[2] = '1'
+		}
+	}
+	return string(bits[:])
+}
+
+// CategoriesParam converts the human-readable categories list into the 3-bit
+// string the Wallhaven API expects: position 0 = general, 1 = anime, 2 = people.
+func (c *Config) CategoriesParam() string {
+	bits := [3]byte{'0', '0', '0'}
+	for _, cat := range c.Categories {
+		switch cat {
+		case "general":
+			bits[0] = '1'
+		case "anime":
+			bits[1] = '1'
+		case "people":
 			bits[2] = '1'
 		}
 	}
