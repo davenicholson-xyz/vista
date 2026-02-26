@@ -12,6 +12,7 @@ type Config struct {
 	Username    string   `yaml:"username"`
 	Purity      []string `yaml:"purity"`
 	DownloadDir string   `yaml:"download_dir"`
+	Script      string   `yaml:"script"`
 }
 
 func Load() (*Config, error) {

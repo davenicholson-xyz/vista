@@ -22,6 +22,7 @@ type Grid struct {
 	wallpapers  []api.Wallpaper
 	renderer    renderer.ImageRenderer
 	downloadDir string
+	script      string
 	tempDir     string
 
 	cols     int
@@ -33,12 +34,13 @@ type Grid struct {
 	rendered map[int]string
 }
 
-func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir string) *Grid {
+func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, script string) *Grid {
 	tmp, _ := os.MkdirTemp("", "vista-thumbs-*")
 	return &Grid{
 		wallpapers:  wallpapers,
 		renderer:    r,
 		downloadDir: downloadDir,
+		script:      script,
 		tempDir:     tmp,
 		rendered:    make(map[int]string),
 	}
@@ -143,7 +145,7 @@ func (g *Grid) Run() (string, error) {
 				return "", fmt.Errorf("downloading wallpaper: %w", err)
 			}
 			fmt.Printf("Setting wallpaper: %s\n", path)
-			if err := wallpaper.Set(path); err != nil {
+			if err := wallpaper.Set(path, g.script); err != nil {
 				return "", fmt.Errorf("setting wallpaper: %w", err)
 			}
 			fmt.Println("Wallpaper set!")

@@ -51,7 +51,7 @@ func main() {
 		r = &renderer.FallbackRenderer{}
 	}
 
-	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir())
+	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script)
 	defer grid.Cleanup()
 
 	_, err = grid.Run()
