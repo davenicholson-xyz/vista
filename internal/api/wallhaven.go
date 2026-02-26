@@ -47,6 +47,7 @@ type Client struct {
 	Purity        string
 	Categories    string
 	MinResolution string
+	Ratios        string
 }
 
 func (c *Client) SearchPage(opts SearchOptions, page int) ([]Wallpaper, Meta, error) {
@@ -66,6 +67,9 @@ func (c *Client) SearchPage(opts SearchOptions, page int) ([]Wallpaper, Meta, er
 	}
 	if c.MinResolution != "" {
 		params.Set("atleast", c.MinResolution)
+	}
+	if c.Ratios != "" {
+		params.Set("ratios", c.Ratios)
 	}
 	if c.APIKey != "" {
 		params.Set("apikey", c.APIKey)

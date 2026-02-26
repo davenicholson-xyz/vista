@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -13,6 +14,7 @@ type Config struct {
 	Purity        []string `yaml:"purity"`
 	Categories    []string `yaml:"categories"`
 	MinResolution string   `yaml:"min_resolution"`
+	Ratios        []string `yaml:"ratios"`
 	DownloadDir   string   `yaml:"download_dir"`
 	Script        string   `yaml:"script"`
 }
@@ -87,6 +89,11 @@ func (c *Config) CategoriesParam() string {
 		}
 	}
 	return string(bits[:])
+}
+
+// RatiosParam returns the ratios as a comma-separated string for the API.
+func (c *Config) RatiosParam() string {
+	return strings.Join(c.Ratios, ",")
 }
 
 func (c *Config) ResolvedDownloadDir() string {

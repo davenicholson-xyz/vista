@@ -69,6 +69,7 @@ func main() {
 		Purity:        cfg.PurityParam(),
 		Categories:    cfg.CategoriesParam(),
 		MinResolution: cfg.MinResolution,
+		Ratios:        cfg.RatiosParam(),
 	}
 
 	fmt.Printf("%s...\n", label)
