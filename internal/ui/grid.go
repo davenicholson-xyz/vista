@@ -42,15 +42,15 @@ type Grid struct {
 	thumbPaths []string
 
 	// pagination / async loading
-	client   *api.Client
-	query    string
-	nextPage int
-	lastPage int
-	loading  bool
-	loadCh   chan loadResult
+	client     *api.Client
+	searchOpts api.SearchOptions
+	nextPage   int
+	lastPage   int
+	loading    bool
+	loadCh     chan loadResult
 }
 
-func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, script string, client *api.Client, query string, lastPage int) *Grid {
+func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, script string, client *api.Client, opts api.SearchOptions, lastPage int) *Grid {
 	tmp, _ := os.MkdirTemp("", "vista-thumbs-*")
 	return &Grid{
 		wallpapers:  wallpapers,
@@ -61,7 +61,7 @@ func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, 
 		tempDir:     tmp,
 		rendered:    make(map[int]string),
 		client:      client,
-		query:       query,
+		searchOpts:  opts,
 		nextPage:    2,
 		lastPage:    lastPage,
 		loadCh:      make(chan loadResult, 1),
@@ -137,7 +137,7 @@ func (g *Grid) maybeLoadMore() {
 
 func (g *Grid) fetchNextPage() {
 	page := g.nextPage
-	wallpapers, _, err := g.client.SearchPage(g.query, page)
+	wallpapers, _, err := g.client.SearchPage(g.searchOpts, page)
 	if err != nil {
 		// Skip this page and try the next one next time.
 		g.loadCh <- loadResult{nextPage: page + 1}

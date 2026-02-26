@@ -34,15 +34,27 @@ type searchResponse struct {
 	Meta Meta        `json:"meta"`
 }
 
+// SearchOptions controls what the API returns.
+// Sorting values: relevance, date_added, random, views, favorites, toplist, hot.
+type SearchOptions struct {
+	Query   string
+	Sorting string
+}
+
 type Client struct {
 	APIKey   string
 	Username string
 	Purity   string
 }
 
-func (c *Client) SearchPage(query string, page int) ([]Wallpaper, Meta, error) {
+func (c *Client) SearchPage(opts SearchOptions, page int) ([]Wallpaper, Meta, error) {
 	params := url.Values{}
-	params.Set("q", query)
+	if opts.Query != "" {
+		params.Set("q", opts.Query)
+	}
+	if opts.Sorting != "" {
+		params.Set("sorting", opts.Sorting)
+	}
 	params.Set("page", fmt.Sprintf("%d", page))
 	if c.Purity != "" {
 		params.Set("purity", c.Purity)

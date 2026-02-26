@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/davenicholson-xyz/vista/internal/api"
 	"github.com/davenicholson-xyz/vista/internal/config"
@@ -10,13 +11,52 @@ import (
 	"github.com/davenicholson-xyz/vista/internal/ui"
 )
 
+const usage = `Usage: vista <command> [query]
+
+Commands:
+  search, s <query>   search by keyword
+  top,    t [query]   top-rated wallpapers
+  hot,    h [query]   trending wallpapers
+  new,    n [query]   newest wallpapers
+  random, r [query]   random wallpapers
+`
+
 func main() {
-	if len(os.Args) < 3 || os.Args[1] != "search" {
-		fmt.Fprintf(os.Stderr, "Usage: vista search <query>\n")
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)
 	}
 
-	query := os.Args[2]
+	cmd := os.Args[1]
+	args := os.Args[2:]
+
+	var opts api.SearchOptions
+	var label string
+
+	switch cmd {
+	case "search", "s":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			os.Exit(1)
+		}
+		opts = api.SearchOptions{Query: strings.Join(args, " "), Sorting: "relevance"}
+		label = fmt.Sprintf("Searching for %q", opts.Query)
+	case "top", "t":
+		opts = api.SearchOptions{Query: strings.Join(args, " "), Sorting: "toplist"}
+		label = "Fetching top wallpapers"
+	case "hot", "h":
+		opts = api.SearchOptions{Query: strings.Join(args, " "), Sorting: "hot"}
+		label = "Fetching hot wallpapers"
+	case "new", "n":
+		opts = api.SearchOptions{Query: strings.Join(args, " "), Sorting: "date_added"}
+		label = "Fetching new wallpapers"
+	case "random", "r":
+		opts = api.SearchOptions{Query: strings.Join(args, " "), Sorting: "random"}
+		label = "Fetching random wallpapers"
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown command: %q\n\n%s", cmd, usage)
+		os.Exit(1)
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -29,8 +69,8 @@ func main() {
 		Purity:   cfg.PurityParam(),
 	}
 
-	fmt.Printf("Searching for %q...\n", query)
-	wallpapers, meta, err := client.SearchPage(query, 1)
+	fmt.Printf("%s...\n", label)
+	wallpapers, meta, err := client.SearchPage(opts, 1)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -51,7 +91,7 @@ func main() {
 		r = &renderer.FallbackRenderer{}
 	}
 
-	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, client, query, meta.LastPage)
+	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, client, opts, meta.LastPage)
 	defer grid.Cleanup()
 
 	_, err = grid.Run()
