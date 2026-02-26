@@ -17,6 +17,12 @@ const (
 	labelHeight   = 1  // rows for resolution label
 )
 
+type loadResult struct {
+	wallpapers []api.Wallpaper
+	thumbPaths []string
+	nextPage   int
+}
+
 // Grid manages the interactive wallpaper grid.
 type Grid struct {
 	wallpapers  []api.Wallpaper
@@ -25,24 +31,40 @@ type Grid struct {
 	script      string
 	tempDir     string
 
-	cols     int
-	cellW    int
-	cellH    int
-	selected int
+	cols      int
+	cellW     int
+	cellH     int
+	selected  int
+	scrollRow int // first visible grid row (0-indexed)
 
 	// cached rendered images: index -> rendered string
-	rendered map[int]string
+	rendered   map[int]string
+	thumbPaths []string
+
+	// pagination / async loading
+	client   *api.Client
+	query    string
+	nextPage int
+	lastPage int
+	loading  bool
+	loadCh   chan loadResult
 }
 
-func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, script string) *Grid {
+func NewGrid(wallpapers []api.Wallpaper, r renderer.ImageRenderer, downloadDir, script string, client *api.Client, query string, lastPage int) *Grid {
 	tmp, _ := os.MkdirTemp("", "vista-thumbs-*")
 	return &Grid{
 		wallpapers:  wallpapers,
+		thumbPaths:  make([]string, len(wallpapers)),
 		renderer:    r,
 		downloadDir: downloadDir,
 		script:      script,
 		tempDir:     tmp,
 		rendered:    make(map[int]string),
+		client:      client,
+		query:       query,
+		nextPage:    2,
+		lastPage:    lastPage,
+		loadCh:      make(chan loadResult, 1),
 	}
 }
 
@@ -75,6 +97,64 @@ func (g *Grid) layout() {
 	}
 }
 
+// visibleRows returns how many grid rows fit in the terminal.
+func (g *Grid) visibleRows() int {
+	_, termH := g.termSize()
+	vr := termH / (g.cellH + labelHeight)
+	if vr < 1 {
+		vr = 1
+	}
+	return vr
+}
+
+// ensureVisible adjusts scrollRow so the selected cell is on screen.
+func (g *Grid) ensureVisible() {
+	vr := g.visibleRows()
+	selectedRow := g.selected / g.cols
+	if selectedRow < g.scrollRow {
+		g.scrollRow = selectedRow
+	} else if selectedRow >= g.scrollRow+vr {
+		g.scrollRow = selectedRow - vr + 1
+	}
+}
+
+// maybeLoadMore fires a background fetch if more pages are available and
+// the viewport is close to the end of loaded content.
+func (g *Grid) maybeLoadMore() {
+	if g.loading || g.nextPage > g.lastPage {
+		return
+	}
+	vr := g.visibleRows()
+	loadedRows := (len(g.wallpapers) + g.cols - 1) / g.cols
+	selectedRow := g.selected / g.cols
+	// Load when: loaded content doesn't fill the screen, or we're within
+	// one screenful of the end.
+	if loadedRows < vr || selectedRow >= loadedRows-vr {
+		g.loading = true
+		go g.fetchNextPage()
+	}
+}
+
+func (g *Grid) fetchNextPage() {
+	page := g.nextPage
+	wallpapers, _, err := g.client.SearchPage(g.query, page)
+	if err != nil {
+		// Skip this page and try the next one next time.
+		g.loadCh <- loadResult{nextPage: page + 1}
+		return
+	}
+	thumbPaths := make([]string, len(wallpapers))
+	for i, wp := range wallpapers {
+		p, _ := wallpaper.Download(wp.Thumbs.Small, g.tempDir)
+		thumbPaths[i] = p
+	}
+	g.loadCh <- loadResult{
+		wallpapers: wallpapers,
+		thumbPaths: thumbPaths,
+		nextPage:   page + 1,
+	}
+}
+
 // Run starts the interactive UI. Returns the path of the selected wallpaper
 // if the user pressed Enter, or "" if they quit.
 func (g *Grid) Run() (string, error) {
@@ -91,97 +171,131 @@ func (g *Grid) Run() (string, error) {
 	fmt.Print("\033[?25l")
 	defer fmt.Print("\033[?25h")
 
-	// Download thumbnails in background as needed
-	thumbPaths := make([]string, len(g.wallpapers))
-	thumbErrors := make([]error, len(g.wallpapers))
+	// Pre-download first page thumbnails (blocking)
+	g.prefetchThumbs()
 
-	// Pre-download all thumbnails (blocking for simplicity on first render)
-	g.prefetchThumbs(thumbPaths, thumbErrors)
-
-	// Initial render
-	g.draw(thumbPaths)
-
-	buf := make([]byte, 16)
-	for {
-		n, err := os.Stdin.Read(buf)
-		if err != nil {
-			return "", err
-		}
-
-		key := buf[:n]
-		action := parseKey(key)
-
-		switch action {
-		case actionQuit:
-			clearScreen()
-			return "", nil
-
-		case actionUp:
-			if g.selected >= g.cols {
-				g.selected -= g.cols
-			}
-		case actionDown:
-			if g.selected+g.cols < len(g.wallpapers) {
-				g.selected += g.cols
-			}
-		case actionLeft:
-			if g.selected > 0 {
-				g.selected--
-			}
-		case actionRight:
-			if g.selected < len(g.wallpapers)-1 {
-				g.selected++
-			}
-
-		case actionSelect:
-			clearScreen()
-			term.Restore(int(os.Stdin.Fd()), oldState)
-			fmt.Print("\033[?25h")
-
-			wp := g.wallpapers[g.selected]
-			fmt.Printf("Downloading %s (%s)...\n", wp.ID, wp.Resolution)
-			path, err := wallpaper.Download(wp.Path, g.downloadDir)
+	// Read stdin in a goroutine so the main loop can also wait on loadCh.
+	inputCh := make(chan []byte, 10)
+	go func() {
+		buf := make([]byte, 16)
+		for {
+			n, err := os.Stdin.Read(buf)
 			if err != nil {
-				return "", fmt.Errorf("downloading wallpaper: %w", err)
+				close(inputCh)
+				return
 			}
-			fmt.Printf("Setting wallpaper: %s\n", path)
-			if err := wallpaper.Set(path, g.script); err != nil {
-				return "", fmt.Errorf("setting wallpaper: %w", err)
+			tmp := make([]byte, n)
+			copy(tmp, buf[:n])
+			inputCh <- tmp
+		}
+	}()
+
+	g.draw()
+	g.maybeLoadMore()
+
+	for {
+		select {
+		case key, ok := <-inputCh:
+			if !ok {
+				return "", nil
 			}
-			fmt.Println("Wallpaper set!")
-			return path, nil
+			action := parseKey(key)
+			switch action {
+			case actionQuit:
+				clearScreen()
+				return "", nil
+
+			case actionUp:
+				if g.selected >= g.cols {
+					g.selected -= g.cols
+					g.ensureVisible()
+				}
+			case actionDown:
+				if g.selected+g.cols < len(g.wallpapers) {
+					g.selected += g.cols
+					g.ensureVisible()
+				}
+			case actionLeft:
+				if g.selected > 0 {
+					g.selected--
+					g.ensureVisible()
+				}
+			case actionRight:
+				if g.selected < len(g.wallpapers)-1 {
+					g.selected++
+					g.ensureVisible()
+				}
+
+			case actionSelect:
+				clearScreen()
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				fmt.Print("\033[?25h")
+
+				wp := g.wallpapers[g.selected]
+				fmt.Printf("Downloading %s (%s)...\n", wp.ID, wp.Resolution)
+				path, err := wallpaper.Download(wp.Path, g.downloadDir)
+				if err != nil {
+					return "", fmt.Errorf("downloading wallpaper: %w", err)
+				}
+				fmt.Printf("Setting wallpaper: %s\n", path)
+				if err := wallpaper.Set(path, g.script); err != nil {
+					return "", fmt.Errorf("setting wallpaper: %w", err)
+				}
+				fmt.Println("Wallpaper set!")
+				return path, nil
+			}
+
+		case result := <-g.loadCh:
+			g.loading = false
+			g.wallpapers = append(g.wallpapers, result.wallpapers...)
+			g.thumbPaths = append(g.thumbPaths, result.thumbPaths...)
+			g.nextPage = result.nextPage
 		}
 
-		g.draw(thumbPaths)
+		g.draw()
+		g.maybeLoadMore()
 	}
 }
 
-func (g *Grid) prefetchThumbs(paths []string, errs []error) {
+func (g *Grid) prefetchThumbs() {
 	for i, wp := range g.wallpapers {
-		p, err := wallpaper.Download(wp.Thumbs.Small, g.tempDir)
-		paths[i] = p
-		errs[i] = err
+		if g.thumbPaths[i] == "" {
+			p, _ := wallpaper.Download(wp.Thumbs.Small, g.tempDir)
+			g.thumbPaths[i] = p
+		}
 	}
 }
 
-func (g *Grid) draw(thumbPaths []string) {
+func (g *Grid) draw() {
+	vr := g.visibleRows()
 	clearScreen()
 
 	for idx := range g.wallpapers {
 		row := idx / g.cols
+		if row < g.scrollRow || row >= g.scrollRow+vr {
+			continue
+		}
 		col := idx % g.cols
 
 		// terminal coordinates are 1-based
-		startRow := row*(g.cellH+labelHeight) + 1
+		startRow := (row-g.scrollRow)*(g.cellH+labelHeight) + 1
 		startCol := col*g.cellW + 1
 
-		// Position the cursor at the cell origin then write the entire image
-		// output as a single block. Kitty/Sixel protocols encode images as
-		// multi-chunk APC sequences; splitting them across repositioned rows
-		// (as a line-by-line approach does) causes each chunk to be treated as
-		// a separate image at the wrong position.
-		fmt.Printf("\033[%d;%dH", startRow, startCol)
-		fmt.Print(g.imageStr(idx, thumbPaths[idx]))
+		thumbPath := ""
+		if idx < len(g.thumbPaths) {
+			thumbPath = g.thumbPaths[idx]
+		}
+
+		// Write the image line by line with explicit cursor positioning.
+		// For pixel protocols (kitty/sixel/iterm) the rendered string has no
+		// raw newlines, so this reduces to a single write at the cell origin —
+		// identical to the old block approach. For symbols/character-art output
+		// each line must be explicitly positioned, otherwise newlines reset the
+		// cursor to column 1 and break the grid layout.
+		imgLines := strings.Split(strings.TrimRight(g.imageStr(idx, thumbPath), "\n"), "\n")
+		for i, line := range imgLines {
+			fmt.Printf("\033[%d;%dH%s", startRow+i, startCol, line)
+		}
 
 		// Label — always at a fixed offset below the cell origin, regardless
 		// of where the image output left the cursor.
@@ -190,8 +304,7 @@ func (g *Grid) draw(thumbPaths []string) {
 	}
 
 	// Park cursor below the grid.
-	totalRows := ((len(g.wallpapers)+g.cols-1)/g.cols)*(g.cellH+labelHeight) + 1
-	fmt.Printf("\033[%d;1H", totalRows)
+	fmt.Printf("\033[%d;1H", vr*(g.cellH+labelHeight)+1)
 }
 
 func (g *Grid) imageStr(idx int, thumbPath string) string {
@@ -233,7 +346,6 @@ func centerPad(s string, width int) string {
 	right := total - left
 	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
 }
-
 
 func clearScreen() {
 	fmt.Print("\033[H\033[2J")
@@ -292,7 +404,7 @@ func parseKey(b []byte) keyAction {
 	return actionNone
 }
 
-// tempDirPath returns the temp dir used for thumbnails.
+// TempDir returns the temp dir used for thumbnails.
 func (g *Grid) TempDir() string {
 	return g.tempDir
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // ImageRenderer renders an image to a string of terminal escape sequences.
@@ -14,7 +15,14 @@ type ImageRenderer interface {
 // detectFormat picks the best chafa --format value based on environment variables.
 // chafa's --format=auto only inspects $TERM, missing terminals like WezTerm that
 // advertise themselves via $TERM_PROGRAM instead.
+// Inside tmux, pixel protocols (kitty/sixel/iterm) either don't pass through
+// or produce output with embedded newlines that our line-by-line grid drawing
+// corrupts. Force symbols (plain ANSI text) which splits cleanly by line.
+// Outside tmux, check TERM_PROGRAM/TERM to pick the best pixel protocol.
 func detectFormat() string {
+	if os.Getenv("TMUX") != "" {
+		return "symbols"
+	}
 	switch os.Getenv("TERM_PROGRAM") {
 	case "WezTerm":
 		return "kitty"
@@ -46,7 +54,11 @@ func (r *ChafaRenderer) Render(imagePath string, width, height int) (string, err
 		return "", fmt.Errorf("chafa: %w", err)
 	}
 
-	return string(out), nil
+	// Chafa emits cursor-hide/show sequences around its output; strip them so
+	// they don't interfere with the cursor state managed by the grid UI.
+	result := strings.ReplaceAll(string(out), "\033[?25l", "")
+	result = strings.ReplaceAll(result, "\033[?25h", "")
+	return result, nil
 }
 
 // IsChafaAvailable checks whether chafa is on PATH.

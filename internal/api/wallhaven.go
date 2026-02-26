@@ -23,8 +23,15 @@ type Wallpaper struct {
 	Thumbs     Thumbs `json:"thumbs"`
 }
 
+type Meta struct {
+	CurrentPage int `json:"current_page"`
+	LastPage    int `json:"last_page"`
+	Total       int `json:"total"`
+}
+
 type searchResponse struct {
 	Data []Wallpaper `json:"data"`
+	Meta Meta        `json:"meta"`
 }
 
 type Client struct {
@@ -33,9 +40,10 @@ type Client struct {
 	Purity   string
 }
 
-func (c *Client) Search(query string) ([]Wallpaper, error) {
+func (c *Client) SearchPage(query string, page int) ([]Wallpaper, Meta, error) {
 	params := url.Values{}
 	params.Set("q", query)
+	params.Set("page", fmt.Sprintf("%d", page))
 	if c.Purity != "" {
 		params.Set("purity", c.Purity)
 	}
@@ -47,7 +55,7 @@ func (c *Client) Search(query string) ([]Wallpaper, error) {
 
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, Meta{}, fmt.Errorf("creating request: %w", err)
 	}
 	if c.APIKey != "" {
 		req.Header.Set("X-API-Key", c.APIKey)
@@ -55,18 +63,18 @@ func (c *Client) Search(query string) ([]Wallpaper, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
+		return nil, Meta{}, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+		return nil, Meta{}, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
 	var result searchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
+		return nil, Meta{}, fmt.Errorf("decoding response: %w", err)
 	}
 
-	return result.Data, nil
+	return result.Data, result.Meta, nil
 }

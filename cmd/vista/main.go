@@ -30,7 +30,7 @@ func main() {
 	}
 
 	fmt.Printf("Searching for %q...\n", query)
-	wallpapers, err := client.Search(query)
+	wallpapers, meta, err := client.SearchPage(query, 1)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -41,7 +41,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	fmt.Printf("Found %d wallpapers. Loading...\n", len(wallpapers))
+	fmt.Printf("Found %d wallpapers across %d pages. Loading...\n", meta.Total, meta.LastPage)
 
 	var r renderer.ImageRenderer
 	if renderer.IsChafaAvailable() {
@@ -51,7 +51,7 @@ func main() {
 		r = &renderer.FallbackRenderer{}
 	}
 
-	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script)
+	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, client, query, meta.LastPage)
 	defer grid.Cleanup()
 
 	_, err = grid.Run()
