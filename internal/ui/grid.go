@@ -229,7 +229,9 @@ func (g *Grid) Run() (string, error) {
 				}
 
 			case actionOpen:
-				openURL(g.wallpapers[g.selected].URL)
+				if url := g.wallpapers[g.selected].URL; url != "" {
+					openURL(url)
+				}
 
 			case actionSelect:
 				clearScreen()
@@ -237,7 +239,7 @@ func (g *Grid) Run() (string, error) {
 				fmt.Print("\033[?25h")
 
 				wp := g.wallpapers[g.selected]
-				fmt.Printf("Downloading %s (%s)...\n", wp.ID, wp.Resolution)
+				fmt.Printf("Applying %s...\n", wp.ID)
 				path, err := wallpaper.Download(wp.Path, g.downloadDir)
 				if err != nil {
 					return "", fmt.Errorf("downloading wallpaper: %w", err)

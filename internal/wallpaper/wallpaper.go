@@ -9,7 +9,12 @@ import (
 )
 
 // Download fetches the URL to destDir, returning the local file path.
+// If rawURL is already an absolute local path it is returned as-is.
 func Download(rawURL, destDir string) (string, error) {
+	if filepath.IsAbs(rawURL) {
+		return rawURL, nil
+	}
+
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return "", fmt.Errorf("creating download dir: %w", err)
 	}

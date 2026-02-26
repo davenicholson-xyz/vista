@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/davenicholson-xyz/vista/internal/api"
@@ -15,11 +17,12 @@ import (
 const usage = `Usage: vista [flags] <command> [query]
 
 Commands:
-  search, s <query>   search by keyword
-  top,    t [query]   top-rated wallpapers
-  hot,    h [query]   trending wallpapers
-  new,    n [query]   newest wallpapers
-  random, r [query]   random wallpapers
+  search,  s  <query>   search by keyword
+  top,     t  [query]   top-rated wallpapers
+  hot,     h  [query]   trending wallpapers
+  new,     n  [query]   newest wallpapers
+  random,  r  [query]   random wallpapers
+  history, hi           browse previously downloaded wallpapers
 
 Flags:
   --apikey          Wallhaven API key
@@ -54,34 +57,6 @@ func main() {
 	cmd  := args[0]
 	rest := args[1:]
 
-	var opts  api.SearchOptions
-	var label string
-
-	switch cmd {
-	case "search", "s":
-		if len(rest) == 0 {
-			fmt.Fprint(os.Stderr, usage)
-			os.Exit(1)
-		}
-		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "relevance"}
-		label = fmt.Sprintf("Searching for %q", opts.Query)
-	case "top", "t":
-		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "toplist"}
-		label = "Fetching top wallpapers"
-	case "hot", "h":
-		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "hot"}
-		label = "Fetching hot wallpapers"
-	case "new", "n":
-		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "date_added"}
-		label = "Fetching new wallpapers"
-	case "random", "r":
-		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "random"}
-		label = "Fetching random wallpapers"
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %q\n\n%s", cmd, usage)
-		os.Exit(1)
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not load config: %v\n", err)
@@ -110,6 +85,63 @@ func main() {
 		cfg.Script = *scriptFlag
 	}
 
+	var r renderer.ImageRenderer
+	if renderer.IsChafaAvailable() {
+		r = &renderer.ChafaRenderer{}
+	} else {
+		fmt.Fprintln(os.Stderr, "Warning: chafa not found, falling back to placeholder renderer")
+		r = &renderer.FallbackRenderer{}
+	}
+
+	// history is handled locally — no API call needed.
+	if cmd == "history" || cmd == "hi" {
+		wallpapers, err := localWallpapers(cfg.ResolvedDownloadDir())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading history: %v\n", err)
+			os.Exit(1)
+		}
+		if len(wallpapers) == 0 {
+			fmt.Println("No downloaded wallpapers found.")
+			os.Exit(0)
+		}
+		fmt.Printf("Found %d downloaded wallpapers. Loading...\n", len(wallpapers))
+		grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, nil, api.SearchOptions{}, 1)
+		defer grid.Cleanup()
+		if _, err := grid.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	var opts  api.SearchOptions
+	var label string
+
+	switch cmd {
+	case "search", "s":
+		if len(rest) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			os.Exit(1)
+		}
+		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "relevance"}
+		label = fmt.Sprintf("Searching for %q", opts.Query)
+	case "top", "t":
+		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "toplist"}
+		label = "Fetching top wallpapers"
+	case "hot", "h":
+		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "hot"}
+		label = "Fetching hot wallpapers"
+	case "new", "n":
+		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "date_added"}
+		label = "Fetching new wallpapers"
+	case "random", "r":
+		opts  = api.SearchOptions{Query: strings.Join(rest, " "), Sorting: "random"}
+		label = "Fetching random wallpapers"
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown command: %q\n\n%s", cmd, usage)
+		os.Exit(1)
+	}
+
 	client := &api.Client{
 		APIKey:        cfg.APIKey,
 		Username:      cfg.Username,
@@ -133,14 +165,6 @@ func main() {
 
 	fmt.Printf("Found %d wallpapers across %d pages. Loading...\n", meta.Total, meta.LastPage)
 
-	var r renderer.ImageRenderer
-	if renderer.IsChafaAvailable() {
-		r = &renderer.ChafaRenderer{}
-	} else {
-		fmt.Fprintln(os.Stderr, "Warning: chafa not found, falling back to placeholder renderer")
-		r = &renderer.FallbackRenderer{}
-	}
-
 	grid := ui.NewGrid(wallpapers, r, cfg.ResolvedDownloadDir(), cfg.Script, client, opts, meta.LastPage)
 	defer grid.Cleanup()
 
@@ -149,4 +173,55 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+var imageExts = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
+}
+
+// localWallpapers reads dir and returns Wallpaper entries for each image,
+// sorted newest-first by modification time.
+func localWallpapers(dir string) ([]api.Wallpaper, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	type entry struct {
+		path    string
+		name    string
+		modTime int64
+	}
+	var imgs []entry
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if !imageExts[strings.ToLower(filepath.Ext(e.Name()))] {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		imgs = append(imgs, entry{
+			path:    filepath.Join(dir, e.Name()),
+			name:    e.Name(),
+			modTime: info.ModTime().Unix(),
+		})
+	}
+
+	sort.Slice(imgs, func(i, j int) bool {
+		return imgs[i].modTime > imgs[j].modTime
+	})
+
+	wallpapers := make([]api.Wallpaper, len(imgs))
+	for i, img := range imgs {
+		wallpapers[i] = api.Wallpaper{
+			ID:     img.name,
+			Path:   img.path,
+			Thumbs: api.Thumbs{Small: img.path},
+		}
+	}
+	return wallpapers, nil
 }
